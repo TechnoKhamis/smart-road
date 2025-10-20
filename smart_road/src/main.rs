@@ -1,3 +1,8 @@
+mod simulation;
+mod render;
+mod events;
+mod stats;
+
 use sdl2::init;
 use sdl2::pixels::Color;
 use std::time::Duration;
