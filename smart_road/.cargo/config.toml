@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-L", "C:/SDL2/lib/x64"]
