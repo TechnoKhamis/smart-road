@@ -2,7 +2,9 @@
 
 /// Expose the vehicle module so other modules can use Vehicle, Route, Direction
 pub mod vehicle;
+pub mod intersection;
 pub use vehicle::{Vehicle, Direction, Route};
+pub use intersection::Intersection;
 
 /// Placeholder for simulation logic (vehicles, world updates)
 pub struct Simulation {

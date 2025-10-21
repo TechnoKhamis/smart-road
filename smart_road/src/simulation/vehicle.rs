@@ -1,5 +1,5 @@
 /// Represents the four cardinal directions a vehicle can come from
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
     North,
     South,
@@ -8,7 +8,7 @@ pub enum Direction {
 }
 
 /// Represents the route a vehicle will take at the intersection
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Route {
     Right,
     Straight,
