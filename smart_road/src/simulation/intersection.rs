@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use super::vehicle::{Vehicle, Direction, Route};
+use super::physics::Physics;
 
 
 #[derive(Debug)]
@@ -10,6 +11,7 @@ pub struct Intersection {
     
     /// Minimum safe distance between vehicles (in meters)
     pub safe_distance: f32,
+    pub physics: Physics,
 }
 
 impl Intersection {
@@ -26,6 +28,7 @@ impl Intersection {
         Intersection {
             lanes,
             safe_distance,
+            physics: Physics::new(safe_distance, 50.0),
         }
     }
 
@@ -119,6 +122,10 @@ impl Intersection {
             for vehicle in lane.iter_mut() {
                 if vehicle.active {
                     vehicle.update_position(delta_time);
+                    // Use physics to check boundaries
+                    if self.physics.is_out_of_bounds(vehicle) {
+                        vehicle.active = false;
+                    }
                 }
             }
             
