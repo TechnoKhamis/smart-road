@@ -1,28 +1,40 @@
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::pixels::Color;
 
 mod simulation;
 mod events;
+mod render;
 
 use events::InputHandler;
 use simulation::Simulation;
+use render::{AssetManager, Renderer};
 use std::time::Duration;
 
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
+    let _image_context = sdl2::image::init(sdl2::image::InitFlag::PNG)?;
+
     let window = video_subsystem
-        .window("Traffic Intersection", 800, 600)
+        .window("Traffic Intersection", 700, 700)
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    let texture_creator = canvas.texture_creator();
+
+    // Create asset manager and renderer
+    // Adjusted scale to 10.0 pixels per meter for balanced view in square window
+    let assets = AssetManager::new(&texture_creator, 700, 700, 10.0)?;
+    let renderer = Renderer::new(assets);
+
     let mut event_pump = sdl_context.event_pump()?;
 
     // Create simulation and input handler
-    let mut simulation = Simulation::new(10.0); // 10m safe distance
-    let mut input_handler = InputHandler::new(500, 100.0); // 500ms cooldown, 100m spawn distance
+    let mut simulation = Simulation::new(25.0);
+    let mut input_handler = InputHandler::new(500, 100.0);
 
     'running: loop {
         // Handle events
@@ -30,12 +42,10 @@ fn main() -> Result<(), String> {
             match event {
                 Event::Quit { .. } => break 'running,
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    // Show statistics and exit
                     simulation.print_statistics();
                     break 'running;
                 }
                 Event::KeyDown { keycode: Some(keycode), .. } => {
-                    // Handle vehicle spawning
                     let vehicles = input_handler.handle_keypress(keycode);
                     for vehicle in vehicles {
                         simulation.add_vehicle(vehicle);
@@ -51,11 +61,10 @@ fn main() -> Result<(), String> {
         }
 
         // Update simulation
-        simulation.update(0.016); // ~60 FPS
+        simulation.update(0.016);
 
         // Render
-        canvas.clear();
-        // Add your rendering code here
+        renderer.render(&mut canvas, &simulation)?;
         canvas.present();
 
         std::thread::sleep(Duration::from_millis(16));

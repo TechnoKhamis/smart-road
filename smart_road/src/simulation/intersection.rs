@@ -28,7 +28,7 @@ impl Intersection {
         Intersection {
             lanes,
             safe_distance,
-            physics: Physics::new(safe_distance, 50.0),
+            physics: Physics::new(safe_distance, 100.0),
         }
     }
 
