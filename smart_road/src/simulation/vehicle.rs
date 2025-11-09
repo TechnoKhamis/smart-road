@@ -34,7 +34,8 @@ const LANE_WIDTH: f32 = 3.5;
 const LANES_PER_DIRECTION: f32 = 3.0;
 pub const INTERSECTION_HALF_WIDTH: f32 = LANE_WIDTH * LANES_PER_DIRECTION; // 10.5m
 
-const TURN_SHIFT: f32 = -2.0;
+const TURN_SHIFT: f32 = -1.7;
+const LEFT_TURN_DELAY: f32 = 0.0;
 
 impl Vehicle {
     pub fn new(
@@ -74,6 +75,16 @@ impl Vehicle {
         }
 
         #[inline]
+        fn direction_left_of(dir: Direction) -> Direction {
+            match dir {
+                Direction::North => Direction::West,
+                Direction::West  => Direction::South,
+                Direction::South => Direction::East,
+                Direction::East  => Direction::North,
+            }
+        }
+
+        #[inline]
         fn move_along(pos: &mut (f32, f32), dir: Direction, dist: f32) {
             match dir {
                 Direction::North => pos.1 += dist,
@@ -108,7 +119,6 @@ impl Vehicle {
                 // 2) compute lateral offset vectors for old and new directions and adjust base position
                 let offset = lane_offset_for_route(self.route);
 
-                // offset vector as renderer expects: (dx, dy)
                 fn offset_vec(dir: Direction, offset: f32) -> (f32, f32) {
                     match dir {
                         Direction::North => ( offset,  0.0),
@@ -124,7 +134,7 @@ impl Vehicle {
                 let old_off = offset_vec(old_dir, offset);
                 let new_off = offset_vec(new_dir, offset);
 
-                // base_after = base_before + old_off - new_off  (preserves world_before == world_after)
+                // base_after = base_before + old_off - new_off
                 self.position.0 += old_off.0 - new_off.0;
                 self.position.1 += old_off.1 - new_off.1;
 
@@ -134,6 +144,65 @@ impl Vehicle {
                 self.prev_direction = old_dir;
 
                 // 4) move remaining distance after the turn along new direction
+                let after_turn = (distance_traveled - to_edge).max(0.0);
+                if after_turn > 0.0 {
+                    move_along(&mut self.position, self.direction, after_turn);
+                }
+
+                // bookkeeping
+                self.distance_to_intersection -= distance_traveled;
+                self.time_elapsed += delta_time;
+
+                if self.distance_to_intersection < -50.0 {
+                    self.active = false;
+                }
+                return;
+            }
+        }
+
+        // Left-turn: turn only after crossing the destination left-lane centerline.
+        if self.route == Route::Left && !self.has_turned {
+            // Turn when we've passed the center by left-lane offset (+ optional delay)
+            let offset = lane_offset_for_route(self.route); // LANE_WIDTH * 0.5
+            let turn_edge = -(offset + LEFT_TURN_DELAY);    // negative => after center
+
+            let remaining_to_center = self.distance_to_intersection;
+            let to_entry_edge = (remaining_to_center - turn_edge).max(0.0);
+
+            if to_entry_edge <= distance_traveled + f32::EPSILON {
+                // 1) move up to the turn point (still going straight)
+                let to_edge = to_entry_edge.min(distance_traveled);
+                if to_edge > 0.0 {
+                    move_along(&mut self.position, self.direction, to_edge);
+                }
+
+                // 2) transfer lateral offset so position is continuous across the turn
+                let offset = lane_offset_for_route(self.route);
+                fn offset_vec(dir: Direction, offset: f32) -> (f32, f32) {
+                    match dir {
+                        Direction::North => ( offset,  0.0),
+                        Direction::South => (-offset,  0.0),
+                        Direction::East  => ( 0.0, -offset),
+                        Direction::West  => ( 0.0,  offset),
+                    }
+                }
+
+                let old_dir = self.direction;
+                let new_dir = direction_left_of(old_dir);
+
+                let old_off = offset_vec(old_dir, offset);
+                let new_off = offset_vec(new_dir, offset);
+
+                // base_after = base_before + old_off - new_off
+                self.position.0 += old_off.0 - new_off.0;
+                self.position.1 += old_off.1 - new_off.1;
+
+                // 3) commit the 90° left turn
+                self.direction = new_dir;
+                self.has_turned = true;
+                self.prev_direction = old_dir;
+
+                // 4) move remaining distance after the turn along the new direction
                 let after_turn = (distance_traveled - to_edge).max(0.0);
                 if after_turn > 0.0 {
                     move_along(&mut self.position, self.direction, after_turn);
