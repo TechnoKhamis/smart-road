@@ -115,12 +115,13 @@ impl AnimationManager {
     }
 
     /// Gets the lane offset based on the route
-    /// Right lane = rightmost, Straight = middle, Left = leftmost
+    /// Right lane = rightmost (outer), Straight = middle, Left = leftmost (inner)
     fn get_lane_offset(&self, route: Route) -> f32 {
         match route {
-            Route::Right => lanes::LANE_WIDTH * 0.5,      // Rightmost lane
-            Route::Straight => lanes::LANE_WIDTH * 1.5,   // Middle lane
-            Route::Left => lanes::LANE_WIDTH * 2.5,       // Leftmost lane
+            // was: Right => 0.5, Left => 2.5 (inverted)
+            Route::Right => lanes::LANE_WIDTH * 2.5,     // outer/rightmost lane
+            Route::Straight => lanes::LANE_WIDTH * 1.5,  // middle lane
+            Route::Left => lanes::LANE_WIDTH * 0.5,      // inner/leftmost lane
         }
     }
 

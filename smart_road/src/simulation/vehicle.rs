@@ -28,8 +28,11 @@ pub struct Vehicle {
     pub route: Route,                      // The route this vehicle will take (right, straight, or left)
     pub direction: Direction,              // Direction the vehicle is coming from
     pub distance_to_intersection: f32,     // Distance remaining to the intersection in meters
-    pub time_elapsed: f32,                 // in seconds
-    pub active: bool,                       // Whether this vehicle is currently active in the simulation
+    pub active: bool,
+    pub time_elapsed: f32,
+
+    // <-- new field to track completed right-turn
+    pub has_turned: bool,
 }
 
 impl Vehicle {
@@ -48,8 +51,10 @@ impl Vehicle {
             route,
             direction,
             distance_to_intersection,
-            time_elapsed: 0.0,
             active: true,
+            time_elapsed: 0.0,
+            // initialize new field
+            has_turned: false,
         }
     }
 
@@ -61,37 +66,71 @@ impl Vehicle {
     /// # Arguments
     /// * `delta_time` - Time elapsed since last update (in seconds)
     pub fn update_position(&mut self, delta_time: f32) {
-        // Calculate distance traveled in this time step
         let distance_traveled = self.velocity * delta_time;
-        
-        // Update time elapsed
-        self.time_elapsed += delta_time;
-        
-        // Update distance to intersection
-        self.distance_to_intersection -= distance_traveled;
-        
-        // Update position based on direction
-        match self.direction {
-            Direction::North => {
-                // Moving upward (positive Y direction)
-                self.position.1 += distance_traveled;
-            }
-            Direction::South => {
-                // Moving downward (negative Y direction)
-                self.position.1 -= distance_traveled;
-            }
-            Direction::East => {
-                // Moving right (positive X direction)
-                self.position.0 += distance_traveled;
-            }
-            Direction::West => {
-                // Moving left (negative X direction)
-                self.position.0 -= distance_traveled;
+
+        fn direction_right_of(dir: Direction) -> Direction {
+            match dir {
+                Direction::North => Direction::East,
+                Direction::East => Direction::South,
+                Direction::South => Direction::West,
+                Direction::West => Direction::North,
             }
         }
-        
-        // Deactivate vehicle if it has passed through the intersection
-        // (negative distance means it's gone past)
+
+        if self.route == Route::Right && !self.has_turned {
+            // Remaining distance to intersection center before this tick
+            let remaining = self.distance_to_intersection;
+
+            if remaining <= distance_traveled {
+                // Move up to center
+                let to_center = remaining.max(0.0);
+                match self.direction {
+                    Direction::North => self.position.1 += to_center,
+                    Direction::South => self.position.1 -= to_center,
+                    Direction::East  => self.position.0 += to_center,
+                    Direction::West  => self.position.0 -= to_center,
+                }
+
+                // Turn (always) at center
+                self.direction = direction_right_of(self.direction);
+                self.has_turned = true;
+
+                // Move leftover distance along new direction
+                let after_turn = distance_traveled - to_center;
+                match self.direction {
+                    Direction::North => self.position.1 += after_turn,
+                    Direction::South => self.position.1 -= after_turn,
+                    Direction::East  => self.position.0 += after_turn,
+                    Direction::West  => self.position.0 -= after_turn,
+                }
+
+                // Distance to original center now reduced by full traveled amount
+                self.distance_to_intersection -= distance_traveled;
+                self.time_elapsed += delta_time;
+            } else {
+                // Not at center yet: advance straight toward center
+                match self.direction {
+                    Direction::North => self.position.1 += distance_traveled,
+                    Direction::South => self.position.1 -= distance_traveled,
+                    Direction::East  => self.position.0 += distance_traveled,
+                    Direction::West  => self.position.0 -= distance_traveled,
+                }
+                self.distance_to_intersection -= distance_traveled;
+                self.time_elapsed += delta_time;
+            }
+        } else {
+            // Straight or left routes, or already turned right
+            match self.direction {
+                Direction::North => self.position.1 += distance_traveled,
+                Direction::South => self.position.1 -= distance_traveled,
+                Direction::East  => self.position.0 += distance_traveled,
+                Direction::West  => self.position.0 -= distance_traveled,
+            }
+            self.distance_to_intersection -= distance_traveled;
+            self.time_elapsed += delta_time;
+        }
+
+        // Deactivate vehicle if it has passed through the intersection far enough
         if self.distance_to_intersection < -50.0 {
             self.active = false;
         }
@@ -341,5 +380,26 @@ mod tests {
         assert_eq!(right.route, Route::Right);
         assert_eq!(straight.route, Route::Straight);
         assert_eq!(left.route, Route::Left);
+    }
+
+    #[test]
+    fn test_right_lane_turns() {
+        // Approaching from South going North, in right lane (Route::Right)
+        // Start 5m away, velocity high enough to reach & turn in one tick
+        let mut v = Vehicle::new(
+            10,
+            (0.0, -5.0),          // 5m south of center (since moving North we increase y)
+            10.0,                 // 10 m/s
+            Route::Right,
+            Direction::North,
+            5.0,                  // distance_to_intersection
+        );
+
+        v.update_position(0.6);   // travels 6m (passes center, should turn)
+
+        assert!(v.has_turned, "Right-route vehicle must mark has_turned");
+        assert_eq!(v.direction, Direction::East, "Vehicle should have turned right (North -> East)");
+        // After moving: 5m to center, 1m after turn along East => x should be ~1.0
+        assert!((v.position.0 - 1.0).abs() < 0.001, "Post-turn X displacement incorrect");
     }
 }

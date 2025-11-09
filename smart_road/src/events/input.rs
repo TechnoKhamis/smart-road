@@ -1,3 +1,6 @@
+#[derive(Clone, Copy)]
+enum LanePos { Left, Middle, Right }
+
 use sdl2::keyboard::Keycode;
 use rand::Rng;
 use std::time::{Duration, Instant};
@@ -107,12 +110,15 @@ impl InputHandler {
         Some(self.create_vehicle(direction))
     }
 
-    /// Creates a new vehicle with random route and velocity
+    /// Creates a new vehicle with lane-based route selection
     fn create_vehicle(&mut self, direction: Direction) -> Vehicle {
         let id = self.next_vehicle_id;
         self.next_vehicle_id += 1;
 
-        let route = Self::random_route();
+        // Pick a lane at spawn, then map lane -> route
+        let lane = Self::random_lane();
+        let route = Self::route_from_lane(lane);
+
         let velocity = Self::random_velocity();
         let position = Self::get_spawn_position(direction, self.spawn_distance);
 
@@ -126,12 +132,23 @@ impl InputHandler {
         )
     }
 
-    fn random_route() -> Route {
+    // -- lane/route helpers --
+
+
+    fn route_from_lane(lane: LanePos) -> Route {
+        match lane {
+            LanePos::Right => Route::Right,
+            LanePos::Middle => Route::Straight,
+            LanePos::Left => Route::Left,
+        }
+    }
+
+    fn random_lane() -> LanePos {
         let mut rng = rand::thread_rng();
         match rng.gen_range(0..3) {
-            0 => Route::Straight,
-            1 => Route::Left,
-            _ => Route::Right,
+            0 => LanePos::Right,
+            1 => LanePos::Middle,
+            _ => LanePos::Left,
         }
     }
 
