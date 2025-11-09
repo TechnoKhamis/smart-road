@@ -22,18 +22,23 @@ pub enum Route {
 /// currently active in the simulation.
 #[derive(Debug, Clone)]
 pub struct Vehicle {
-    pub id: u32,             
-    pub position: (f32, f32),              // Current position in 2D space (x, y coordinates)
+    pub id: u32,
+    pub position: (f32, f32),
     pub velocity: f32,
-    pub route: Route,                      // The route this vehicle will take (right, straight, or left)
-    pub direction: Direction,              // Direction the vehicle is coming from
-    pub distance_to_intersection: f32,     // Distance remaining to the intersection in meters
+    pub route: Route,
+    pub direction: Direction,
+    pub distance_to_intersection: f32,
     pub active: bool,
     pub time_elapsed: f32,
-
-    // <-- new field to track completed right-turn
     pub has_turned: bool,
+
+    // NEW: original direction before current (used to keep lane offset continuity)
+    pub prev_direction: Direction,
 }
+
+const LANE_WIDTH: f32 = 3.5;
+const LANES_PER_DIRECTION: f32 = 3.0;
+pub const INTERSECTION_HALF_WIDTH: f32 = LANE_WIDTH * LANES_PER_DIRECTION; // 10.5m
 
 impl Vehicle {
     pub fn new(
@@ -53,8 +58,8 @@ impl Vehicle {
             distance_to_intersection,
             active: true,
             time_elapsed: 0.0,
-            // initialize new field
             has_turned: false,
+            prev_direction: direction, // initialize
         }
     }
 
@@ -68,71 +73,106 @@ impl Vehicle {
     pub fn update_position(&mut self, delta_time: f32) {
         let distance_traveled = self.velocity * delta_time;
 
+        #[inline]
         fn direction_right_of(dir: Direction) -> Direction {
             match dir {
                 Direction::North => Direction::East,
-                Direction::East => Direction::South,
+                Direction::East  => Direction::South,
                 Direction::South => Direction::West,
-                Direction::West => Direction::North,
+                Direction::West  => Direction::North,
             }
         }
 
+        #[inline]
+        fn move_along(pos: &mut (f32, f32), dir: Direction, dist: f32) {
+            match dir {
+                Direction::North => pos.1 += dist,
+                Direction::South => pos.1 -= dist,
+                Direction::East  => pos.0 += dist,
+                Direction::West  => pos.0 -= dist,
+            }
+        }
+
+        #[inline]
+        fn lane_offset_for_route(route: Route) -> f32 {
+            // Must match renderer: Right=2.5, Straight=1.5, Left=0.5 lanes
+            match route {
+                Route::Right    => LANE_WIDTH * 2.5,
+                Route::Straight => LANE_WIDTH * 1.5,
+                Route::Left     => LANE_WIDTH * 0.5,
+            }
+        }
+
+        // Right-turn: turn at intersection entry edge and transfer lateral offset into base position.
         if self.route == Route::Right && !self.has_turned {
-            // Remaining distance to intersection center before this tick
-            let remaining = self.distance_to_intersection;
+            let turn_edge = INTERSECTION_HALF_WIDTH;
+            let remaining_to_center = self.distance_to_intersection;
+            let to_entry_edge = (remaining_to_center - turn_edge).max(0.0);
 
-            if remaining <= distance_traveled {
-                // Move up to center
-                let to_center = remaining.max(0.0);
-                match self.direction {
-                    Direction::North => self.position.1 += to_center,
-                    Direction::South => self.position.1 -= to_center,
-                    Direction::East  => self.position.0 += to_center,
-                    Direction::West  => self.position.0 -= to_center,
+            if to_entry_edge <= distance_traveled + f32::EPSILON {
+                // 1) move up to the entry edge
+                let to_edge = to_entry_edge.min(distance_traveled);
+                if to_edge > 0.0 {
+                    move_along(&mut self.position, self.direction, to_edge);
                 }
 
-                // Turn (always) at center
-                self.direction = direction_right_of(self.direction);
+                // 2) compute lateral offset vectors for old and new directions and adjust base position
+                let offset = lane_offset_for_route(self.route);
+
+                // offset vector as renderer expects: (dx, dy)
+                fn offset_vec(dir: Direction, offset: f32) -> (f32, f32) {
+                    match dir {
+                        Direction::North => ( offset,  0.0),
+                        Direction::South => (-offset,  0.0),
+                        Direction::East  => ( 0.0, -offset),
+                        Direction::West  => ( 0.0,  offset),
+                    }
+                }
+
+                let old_dir = self.direction;
+                let new_dir = direction_right_of(old_dir);
+
+                let old_off = offset_vec(old_dir, offset);
+                let new_off = offset_vec(new_dir, offset);
+
+                // base_after = base_before + old_off - new_off  (preserves world_before == world_after)
+                self.position.0 += old_off.0 - new_off.0;
+                self.position.1 += old_off.1 - new_off.1;
+
+                // 3) turn right
+                self.direction = new_dir;
                 self.has_turned = true;
+                self.prev_direction = old_dir;
 
-                // Move leftover distance along new direction
-                let after_turn = distance_traveled - to_center;
-                match self.direction {
-                    Direction::North => self.position.1 += after_turn,
-                    Direction::South => self.position.1 -= after_turn,
-                    Direction::East  => self.position.0 += after_turn,
-                    Direction::West  => self.position.0 -= after_turn,
+                // 4) move remaining distance after the turn along new direction
+                let after_turn = (distance_traveled - to_edge).max(0.0);
+                if after_turn > 0.0 {
+                    move_along(&mut self.position, self.direction, after_turn);
                 }
 
-                // Distance to original center now reduced by full traveled amount
+                // bookkeeping
                 self.distance_to_intersection -= distance_traveled;
                 self.time_elapsed += delta_time;
-            } else {
-                // Not at center yet: advance straight toward center
-                match self.direction {
-                    Direction::North => self.position.1 += distance_traveled,
-                    Direction::South => self.position.1 -= distance_traveled,
-                    Direction::East  => self.position.0 += distance_traveled,
-                    Direction::West  => self.position.0 -= distance_traveled,
+
+                if self.distance_to_intersection < -50.0 {
+                    self.active = false;
                 }
-                self.distance_to_intersection -= distance_traveled;
-                self.time_elapsed += delta_time;
+                return;
             }
-        } else {
-            // Straight or left routes, or already turned right
-            match self.direction {
-                Direction::North => self.position.1 += distance_traveled,
-                Direction::South => self.position.1 -= distance_traveled,
-                Direction::East  => self.position.0 += distance_traveled,
-                Direction::West  => self.position.0 -= distance_traveled,
-            }
-            self.distance_to_intersection -= distance_traveled;
-            self.time_elapsed += delta_time;
         }
 
-        // Deactivate vehicle if it has passed through the intersection far enough
+        // Default straight movement or post-turn movement
+        move_along(&mut self.position, self.direction, distance_traveled);
+        self.distance_to_intersection -= distance_traveled;
+        self.time_elapsed += delta_time;
+
         if self.distance_to_intersection < -50.0 {
             self.active = false;
+        }
+
+        // Keep prev_direction in sync when no turn happened this tick
+        if !self.has_turned {
+            self.prev_direction = self.direction;
         }
     }
 

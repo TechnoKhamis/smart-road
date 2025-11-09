@@ -86,31 +86,15 @@ impl AnimationManager {
     fn calculate_vehicle_position(&self, vehicle: &Vehicle) -> (f32, f32) {
         let base_x = vehicle.position.0;
         let base_y = vehicle.position.1;
-
-        // Determine lane offset based on direction and route
         let lane_offset = self.get_lane_offset(vehicle.route);
 
+        // Physics now transfers offset at the moment of turning.
+        // Renderer applies offset only based on current direction.
         match vehicle.direction {
-            Direction::North => {
-                // Coming from south, moving north (upward)
-                // Lanes are on the RIGHT side of the road (positive X)
-                (base_x + lane_offset, base_y)
-            }
-            Direction::South => {
-                // Coming from north, moving south (downward)
-                // Lanes are on the RIGHT side (negative X)
-                (base_x - lane_offset, base_y)
-            }
-            Direction::East => {
-                // Coming from west, moving east (rightward)
-                // Lanes are on the RIGHT side (negative Y)
-                (base_x, base_y - lane_offset)
-            }
-            Direction::West => {
-                // Coming from east, moving west (leftward)
-                // Lanes are on the RIGHT side (positive Y)
-                (base_x, base_y + lane_offset)
-            }
+            Direction::North => (base_x + lane_offset, base_y),
+            Direction::South => (base_x - lane_offset, base_y),
+            Direction::East  => (base_x, base_y - lane_offset),
+            Direction::West  => (base_x, base_y + lane_offset),
         }
     }
 
