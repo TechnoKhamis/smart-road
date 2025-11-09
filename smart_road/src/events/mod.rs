@@ -1,5 +1,3 @@
-//! Events module skeleton
-
 pub mod input;
 
 pub use input::InputHandler;

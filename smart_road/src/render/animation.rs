@@ -99,7 +99,6 @@ impl AnimationManager {
     }
 
     /// Gets the lane offset based on the route
-    /// Right lane = rightmost (outer), Straight = middle, Left = leftmost (inner)
     fn get_lane_offset(&self, route: Route) -> f32 {
         match route {
             // was: Right => 0.5, Left => 2.5 (inverted)

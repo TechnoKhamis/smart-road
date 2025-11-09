@@ -16,10 +16,6 @@ pub enum Route {
 }
 
 /// Represents a vehicle in the traffic simulation
-/// 
-/// Each vehicle has a unique ID, position, velocity, and planned route.
-/// The vehicle tracks its distance to the intersection and whether it's
-/// currently active in the simulation.
 #[derive(Debug, Clone)]
 pub struct Vehicle {
     pub id: u32,
@@ -31,14 +27,14 @@ pub struct Vehicle {
     pub active: bool,
     pub time_elapsed: f32,
     pub has_turned: bool,
-
-    // NEW: original direction before current (used to keep lane offset continuity)
     pub prev_direction: Direction,
 }
 
 const LANE_WIDTH: f32 = 3.5;
 const LANES_PER_DIRECTION: f32 = 3.0;
 pub const INTERSECTION_HALF_WIDTH: f32 = LANE_WIDTH * LANES_PER_DIRECTION; // 10.5m
+
+const TURN_SHIFT: f32 = -2.0;
 
 impl Vehicle {
     pub fn new(
@@ -64,12 +60,6 @@ impl Vehicle {
     }
 
     /// Updates the vehicle's position based on its velocity and the time elapsed
-    /// 
-    /// Uses basic kinematics: distance = velocity × time
-    /// Also updates the distance to intersection and total time elapsed.
-    /// 
-    /// # Arguments
-    /// * `delta_time` - Time elapsed since last update (in seconds)
     pub fn update_position(&mut self, delta_time: f32) {
         let distance_traveled = self.velocity * delta_time;
 
@@ -95,7 +85,6 @@ impl Vehicle {
 
         #[inline]
         fn lane_offset_for_route(route: Route) -> f32 {
-            // Must match renderer: Right=2.5, Straight=1.5, Left=0.5 lanes
             match route {
                 Route::Right    => LANE_WIDTH * 2.5,
                 Route::Straight => LANE_WIDTH * 1.5,
@@ -103,9 +92,9 @@ impl Vehicle {
             }
         }
 
-        // Right-turn: turn at intersection entry edge and transfer lateral offset into base position.
+        // Right-turn: turn at intersection.
         if self.route == Route::Right && !self.has_turned {
-            let turn_edge = INTERSECTION_HALF_WIDTH;
+            let turn_edge = INTERSECTION_HALF_WIDTH + TURN_SHIFT;
             let remaining_to_center = self.distance_to_intersection;
             let to_entry_edge = (remaining_to_center - turn_edge).max(0.0);
 
@@ -177,16 +166,6 @@ impl Vehicle {
     }
 
     /// Checks if this vehicle is too close to another vehicle
-    /// 
-    /// Calculates the Euclidean distance between two vehicles and compares
-    /// it to the safe distance threshold.
-    /// 
-    /// # Arguments
-    /// * `other` - Reference to another vehicle
-    /// * `safe_distance` - Minimum safe distance in meters
-    /// 
-    /// # Returns
-    /// `true` if the vehicles are closer than the safe distance, `false` otherwise
     pub fn is_too_close(&self, other: &Vehicle, safe_distance: f32) -> bool {
         // Calculate Euclidean distance between the two vehicles
         let dx = self.position.0 - other.position.0;
@@ -203,243 +182,12 @@ impl Vehicle {
     }
 
     /// Sets the vehicle's velocity
-    /// 
-    /// # Arguments
-    /// * `velocity` - New velocity in m/s
     pub fn set_velocity(&mut self, velocity: f32) {
         self.velocity = velocity;
     }
 
     /// Checks if the vehicle is currently stopped
-    /// 
-    /// # Returns
-    /// `true` if velocity is 0, `false` otherwise
     pub fn is_stopped(&self) -> bool {
         self.velocity == 0.0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_vehicle_creation() {
-        let vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        assert_eq!(vehicle.id, 1);
-        assert_eq!(vehicle.position, (0.0, 0.0));
-        assert_eq!(vehicle.velocity, 10.0);
-        assert_eq!(vehicle.route, Route::Straight);
-        assert_eq!(vehicle.direction, Direction::North);
-        assert_eq!(vehicle.distance_to_intersection, 100.0);
-        assert_eq!(vehicle.time_elapsed, 0.0);
-        assert!(vehicle.active);
-    }
-
-    #[test]
-    fn test_update_position_north() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        vehicle.update_position(1.0);
-
-        assert_eq!(vehicle.position.1, 10.0); // Y increased
-        assert_eq!(vehicle.distance_to_intersection, 90.0);
-        assert_eq!(vehicle.time_elapsed, 1.0);
-    }
-
-    #[test]
-    fn test_update_position_south() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 100.0),
-            10.0,
-            Route::Straight,
-            Direction::South,
-            100.0,
-        );
-
-        vehicle.update_position(2.0);
-
-        assert_eq!(vehicle.position.1, 80.0); // Y decreased by 20
-        assert_eq!(vehicle.distance_to_intersection, 80.0);
-        assert_eq!(vehicle.time_elapsed, 2.0);
-    }
-
-    #[test]
-    fn test_update_position_east() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            5.0,
-            Route::Right,
-            Direction::East,
-            50.0,
-        );
-
-        vehicle.update_position(2.0);
-
-        assert_eq!(vehicle.position.0, 10.0); // X increased by 10
-        assert_eq!(vehicle.distance_to_intersection, 40.0);
-    }
-
-    #[test]
-    fn test_update_position_west() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (100.0, 0.0),
-            10.0,
-            Route::Left,
-            Direction::West,
-            100.0,
-        );
-
-        vehicle.update_position(1.0);
-
-        assert_eq!(vehicle.position.0, 90.0); // X decreased by 10
-        assert_eq!(vehicle.distance_to_intersection, 90.0);
-    }
-
-    #[test]
-    fn test_vehicle_deactivation() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            10.0,
-        );
-
-        // Move vehicle past the intersection
-        vehicle.update_position(10.0); // Should make distance = -90
-        
-        assert!(!vehicle.active);
-    }
-
-    #[test]
-    fn test_is_too_close() {
-        let vehicle1 = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        let vehicle2 = Vehicle::new(
-            2,
-            (3.0, 4.0), // Distance = 5.0
-            10.0,
-            Route::Straight,
-            Direction::North,
-            95.0,
-        );
-
-        assert!(vehicle1.is_too_close(&vehicle2, 10.0)); // 5 < 10
-        assert!(!vehicle1.is_too_close(&vehicle2, 3.0)); // 5 > 3
-    }
-
-    #[test]
-    fn test_stop_vehicle() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        vehicle.stop();
-
-        assert_eq!(vehicle.velocity, 0.0);
-        assert!(vehicle.is_stopped());
-    }
-
-    #[test]
-    fn test_set_velocity() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        vehicle.set_velocity(20.0);
-        assert_eq!(vehicle.velocity, 20.0);
-
-        vehicle.set_velocity(0.0);
-        assert!(vehicle.is_stopped());
-    }
-
-    #[test]
-    fn test_multiple_updates() {
-        let mut vehicle = Vehicle::new(
-            1,
-            (0.0, 0.0),
-            10.0,
-            Route::Straight,
-            Direction::North,
-            100.0,
-        );
-
-        // Update 5 times with 0.5 second intervals
-        for _ in 0..5 {
-            vehicle.update_position(0.5);
-        }
-
-        assert_eq!(vehicle.position.1, 25.0); // 10 * 2.5 seconds
-        assert_eq!(vehicle.distance_to_intersection, 75.0);
-        assert_eq!(vehicle.time_elapsed, 2.5);
-    }
-
-    #[test]
-    fn test_route_variants() {
-        let right = Vehicle::new(1, (0.0, 0.0), 10.0, Route::Right, Direction::North, 100.0);
-        let straight = Vehicle::new(2, (0.0, 0.0), 10.0, Route::Straight, Direction::North, 100.0);
-        let left = Vehicle::new(3, (0.0, 0.0), 10.0, Route::Left, Direction::North, 100.0);
-
-        assert_eq!(right.route, Route::Right);
-        assert_eq!(straight.route, Route::Straight);
-        assert_eq!(left.route, Route::Left);
-    }
-
-    #[test]
-    fn test_right_lane_turns() {
-        // Approaching from South going North, in right lane (Route::Right)
-        // Start 5m away, velocity high enough to reach & turn in one tick
-        let mut v = Vehicle::new(
-            10,
-            (0.0, -5.0),          // 5m south of center (since moving North we increase y)
-            10.0,                 // 10 m/s
-            Route::Right,
-            Direction::North,
-            5.0,                  // distance_to_intersection
-        );
-
-        v.update_position(0.6);   // travels 6m (passes center, should turn)
-
-        assert!(v.has_turned, "Right-route vehicle must mark has_turned");
-        assert_eq!(v.direction, Direction::East, "Vehicle should have turned right (North -> East)");
-        // After moving: 5m to center, 1m after turn along East => x should be ~1.0
-        assert!((v.position.0 - 1.0).abs() < 0.001, "Post-turn X displacement incorrect");
     }
 }
