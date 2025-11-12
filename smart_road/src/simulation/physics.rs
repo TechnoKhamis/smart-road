@@ -3,13 +3,13 @@ use super::vehicle::{Vehicle, Direction};
 /// Predefined velocity constants for the simulation
 pub mod velocities {
     /// Slow velocity: 5 m/s (~18 km/h)
-    pub const SLOW: f32 = 10.0;
+    pub const SLOW: f32 = 5.0;
 
     /// Medium velocity: 10 m/s (~36 km/h)
-    pub const MEDIUM: f32 = 15.0;
+    pub const MEDIUM: f32 = 10.0;
 
     /// Fast velocity: 15 m/s (~54 km/h)
-    pub const FAST: f32 = 18.0;
+    pub const FAST: f32 = 15.0;
 }
 
 /// Physics engine for the traffic simulation

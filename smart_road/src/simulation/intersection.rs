@@ -119,14 +119,20 @@ impl Intersection {
                                         
                                         if other.distance_to_intersection.abs() < INTERSECTION_HALF_WIDTH * 2.0 {
                                             // Check if paths will cross using simplified logic
-                                            let paths_cross = match (vehicle.direction, other.direction, vehicle.route, other.route) {
-                                                (Direction::North, Direction::South, Route::Straight, Route::Straight) => true,
-                                                (Direction::South, Direction::North, Route::Straight, Route::Straight) => true,
-                                                (Direction::East, Direction::West, Route::Straight, Route::Straight) => true,
-                                                (Direction::West, Direction::East, Route::Straight, Route::Straight) => true,
-                                                (_, _, Route::Left, _) => true,
-                                                (_, _, _, Route::Left) => true,
-                                                _ => false,
+                                            // Right turns never conflict with other traffic
+                                            let paths_cross = match (vehicle.route, other.route) {
+                                                (Route::Right, _) => false,  // Right-turning vehicle never conflicts
+                                                (_, Route::Right) => false,  // Other right-turning vehicle never conflicts
+                                                (Route::Left, _) => true,    // Left turns conflict with everything
+                                                (_, Route::Left) => true,    // Anything conflicts with left turns
+                                                // Straight-to-straight conflicts only on opposing lanes
+                                                (Route::Straight, Route::Straight) => match (vehicle.direction, other.direction) {
+                                                    (Direction::North, Direction::South) => true,
+                                                    (Direction::South, Direction::North) => true,
+                                                    (Direction::East, Direction::West) => true,
+                                                    (Direction::West, Direction::East) => true,
+                                                    _ => false,
+                                                }
                                             };
                                             
                                             if paths_cross {
