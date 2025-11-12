@@ -1,17 +1,18 @@
 use std::collections::HashMap;
-use super::vehicle::{Vehicle, Direction, Route};
-use super::physics::Physics;
+use super::vehicle::{Vehicle, Direction, Route, INTERSECTION_HALF_WIDTH};
+use super::physics::{Physics, velocities};
 
-
+/// Traffic intersection with zero-collision management
 #[derive(Debug)]
 pub struct Intersection {
-    /// Stores vehicles in each lane, organized by direction
-    /// Each direction (North, South, East, West) has its own queue of vehicles
+    /// Vehicle lanes organized by direction
     pub lanes: HashMap<Direction, Vec<Vehicle>>,
-    
-    /// Minimum safe distance between vehicles (in meters)
+    /// Minimum safe distance between vehicles (meters)
     pub safe_distance: f32,
+    /// Physics engine for calculations
     pub physics: Physics,
+    /// Distance from intersection center where vehicles must evaluate safety
+    pub intersection_entry_distance: f32,
 }
 
 impl Intersection {
@@ -29,107 +30,261 @@ impl Intersection {
             lanes,
             safe_distance,
             physics: Physics::new(safe_distance, 100.0),
-        }
-    }
-
-    /// Checks if a vehicle can safely enter the intersection
-    /// 
-    /// A vehicle can enter if:
-    /// 1. There are no vehicles in its lane, OR
-    /// 2. All vehicles in its lane are at a safe distance
-    pub fn can_enter(&self, vehicle: &Vehicle) -> bool {
-        // Get the vehicles in the same lane
-        if let Some(lane_vehicles) = self.lanes.get(&vehicle.direction) {
-            // If lane is empty, vehicle can enter
-            if lane_vehicles.is_empty() {
-                return true;
-            }
-            
-            // Check if vehicle is too close to any vehicle in the same lane
-            for other in lane_vehicles {
-                if vehicle.is_too_close(other, self.safe_distance) {
-                    return false;
-                }
-            }
-            
-            // Also check for potential collisions with vehicles from other directions
-            // that might cross paths (simplified check)
-            for (direction, vehicles) in &self.lanes {
-                // Skip same direction
-                if *direction == vehicle.direction {
-                    continue;
-                }
-                
-                // Check for crossing path conflicts
-                for other in vehicles {
-                    // If vehicles are crossing paths, check if they're too close
-                    if self.paths_cross(vehicle, other) && vehicle.is_too_close(other, self.safe_distance * 1.5) {
-                        return false;
-                    }
-                }
-            }
-        }
-        
-        true
-    }
-
-    /// Checks if two vehicles' paths will cross at the intersection
-    fn paths_cross(&self, v1: &Vehicle, v2: &Vehicle) -> bool {
-        // Opposite directions going straight cross each other
-        match (v1.direction, v2.direction) {
-            (Direction::North, Direction::South) | (Direction::South, Direction::North) => {
-                matches!(v1.route, Route::Straight) && matches!(v2.route, Route::Straight)
-            }
-            (Direction::East, Direction::West) | (Direction::West, Direction::East) => {
-                matches!(v1.route, Route::Straight) && matches!(v2.route, Route::Straight)
-            }
-            // Left turns cross most paths
-            _ => matches!(v1.route, Route::Left) || matches!(v2.route, Route::Left)
+            intersection_entry_distance: INTERSECTION_HALF_WIDTH + 10.0, // 10m before intersection
         }
     }
 
     /// Adds a vehicle to the intersection
-    /// 
-    /// The vehicle is added to the appropriate lane based on its direction.
-    /// The vehicle is only added if it can safely enter.
     pub fn add_vehicle(&mut self, direction: Direction, vehicle: Vehicle) -> bool {
-        // Check if vehicle can safely enter
-        if !self.can_enter(&vehicle) {
-            return false;
-        }
-        
-        // Add vehicle to the appropriate lane
         if let Some(lane) = self.lanes.get_mut(&direction) {
             lane.push(vehicle);
             return true;
         }
-        
         false
     }
 
-    /// Updates all vehicles in the intersection
-    /// 
-    /// This method:
-    /// 1. Updates the position of each active vehicle
-    /// 2. Removes vehicles that have completed their journey through the intersection
+    /// Main update loop with zero-collision logic
     pub fn update(&mut self, delta_time: f32) {
-        // Update each lane
-        for lane in self.lanes.values_mut() {
-            // Update positions of all vehicles
-            for vehicle in lane.iter_mut() {
-                if vehicle.active {
-                    vehicle.update_position(delta_time);
-                    // Use physics to check boundaries
-                    if self.physics.is_out_of_bounds(vehicle) {
-                        vehicle.active = false;
+        // Create a snapshot of all lanes ONCE before any mutations
+        let all_lanes_snapshot: HashMap<Direction, Vec<Vehicle>> = self.lanes.iter()
+            .map(|(dir, vehicles)| (*dir, vehicles.clone()))
+            .collect();
+        
+        // Process each lane separately to avoid borrowing issues
+        let directions = [Direction::North, Direction::South, Direction::East, Direction::West];
+        
+        for &direction in &directions {
+            if let Some(lane) = self.lanes.get_mut(&direction) {
+                // Sort by distance to intersection (farthest first for processing)
+                lane.sort_by(|a, b| a.distance_to_intersection.partial_cmp(&b.distance_to_intersection).unwrap());
+                
+                // Process each vehicle in this lane
+                for i in 0..lane.len() {
+                    if let Some(vehicle) = lane.get_mut(i) {
+                        if !vehicle.active {
+                            continue;
+                        }
+
+                        // Apply zero-collision logic inline to avoid borrowing issues
+                        let current_lane = all_lanes_snapshot.get(&direction).unwrap();
+                        
+                        // Step 1: Check for vehicle immediately ahead (prevent overlapping)
+                        let ahead_distance = {
+                            let mut closest_distance = None;
+                            
+                            for (idx, other) in current_lane.iter().enumerate() {
+                                if idx != i && 
+                                   other.active && 
+                                   other.distance_to_intersection < vehicle.distance_to_intersection {
+                                    // Calculate actual distance between vehicles
+                                    let dx = vehicle.position.0 - other.position.0;
+                                    let dy = vehicle.position.1 - other.position.1;
+                                    let distance = (dx * dx + dy * dy).sqrt();
+                                    
+                                    if closest_distance.is_none() || distance < closest_distance.unwrap() {
+                                        closest_distance = Some(distance);
+                                    }
+                                }
+                            }
+                            
+                            closest_distance
+                        };
+                        
+                        if let Some(dist) = ahead_distance {
+                            if dist <= self.safe_distance {
+                                vehicle.stop();
+                                continue;
+                            } else if dist < self.safe_distance * 3.0 {
+                                // When close to another vehicle, use SLOW speed instead of stopping
+                                vehicle.set_velocity(velocities::SLOW);
+                                continue;
+                            }
+                        }
+                        
+                        // Step 2: Check intersection safety
+                        if vehicle.distance_to_intersection <= self.intersection_entry_distance && 
+                           vehicle.distance_to_intersection > 0.0 {
+                            let intersection_safe = {
+                                let mut safe = true;
+                                
+                                for (other_dir, other_lane) in &all_lanes_snapshot {
+                                    if *other_dir == direction {
+                                        continue;
+                                    }
+                                    
+                                    for other in other_lane {
+                                        if !other.active {
+                                            continue;
+                                        }
+                                        
+                                        if other.distance_to_intersection.abs() < INTERSECTION_HALF_WIDTH * 2.0 {
+                                            // Check if paths will cross using simplified logic
+                                            let paths_cross = match (vehicle.direction, other.direction, vehicle.route, other.route) {
+                                                (Direction::North, Direction::South, Route::Straight, Route::Straight) => true,
+                                                (Direction::South, Direction::North, Route::Straight, Route::Straight) => true,
+                                                (Direction::East, Direction::West, Route::Straight, Route::Straight) => true,
+                                                (Direction::West, Direction::East, Route::Straight, Route::Straight) => true,
+                                                (_, _, Route::Left, _) => true,
+                                                (_, _, _, Route::Left) => true,
+                                                _ => false,
+                                            };
+                                            
+                                            if paths_cross {
+                                                let my_time = if vehicle.velocity > 0.0 {
+                                                    vehicle.distance_to_intersection / vehicle.velocity
+                                                } else {
+                                                    f32::INFINITY
+                                                };
+                                                
+                                                let other_time = if other.velocity > 0.0 {
+                                                    other.distance_to_intersection.abs() / other.velocity
+                                                } else {
+                                                    f32::INFINITY
+                                                };
+                                                
+                                                // If both will reach intersection within 3.0 seconds of each other
+                                                if (my_time - other_time).abs() < 3.0 && my_time < 8.0 {
+                                                    // Check right-of-way using vehicle data
+                                                    let has_priority = {
+                                                        // Rule 1: Vehicle already in intersection has absolute priority
+                                                        if vehicle.distance_to_intersection < 0.0 && other.distance_to_intersection >= 0.0 {
+                                                            true
+                                                        } else if other.distance_to_intersection < 0.0 && vehicle.distance_to_intersection >= 0.0 {
+                                                            false
+                                                        } else {
+                                                            // Rule 2: Vehicle closer to intersection has priority
+                                                            let distance_diff = vehicle.distance_to_intersection - other.distance_to_intersection;
+                                                            if distance_diff.abs() > 5.0 {
+                                                                vehicle.distance_to_intersection < other.distance_to_intersection
+                                                            } else {
+                                                                // Rule 3: Route priority (Straight > Right > Left)
+                                                                let vehicle_route_priority = match vehicle.route {
+                                                                    Route::Straight => 3,
+                                                                    Route::Right => 2,
+                                                                    Route::Left => 1,
+                                                                };
+                                                                let other_route_priority = match other.route {
+                                                                    Route::Straight => 3,
+                                                                    Route::Right => 2,
+                                                                    Route::Left => 1,
+                                                                };
+                                                                
+                                                                if vehicle_route_priority != other_route_priority {
+                                                                    vehicle_route_priority > other_route_priority
+                                                                } else {
+                                                                    // Rule 4: Direction priority
+                                                                    let vehicle_priority = match vehicle.direction {
+                                                                        Direction::North => 4,
+                                                                        Direction::East => 3,
+                                                                        Direction::South => 2,
+                                                                        Direction::West => 1,
+                                                                    };
+                                                                    let other_priority = match other.direction {
+                                                                        Direction::North => 4,
+                                                                        Direction::East => 3,
+                                                                        Direction::South => 2,
+                                                                        Direction::West => 1,
+                                                                    };
+                                                                    
+                                                                    if vehicle_priority != other_priority {
+                                                                        vehicle_priority > other_priority
+                                                                    } else {
+                                                                        // Final tie-breaker: lower ID has priority
+                                                                        vehicle.id < other.id
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    };
+                                                    
+                                                    if has_priority {
+                                                        // This vehicle has right of way, continue
+                                                        continue;
+                                                    } else {
+                                                        // Other vehicle has right of way, this one yields
+                                                        safe = false;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    if !safe {
+                                        break;
+                                    }
+                                }
+                                
+                                safe
+                            };
+                            
+                            if !intersection_safe {
+                                let distance_to_stop_line = vehicle.distance_to_intersection - INTERSECTION_HALF_WIDTH;
+                                
+                                if distance_to_stop_line <= 20.0 {
+                                    // Instead of gradual deceleration, use SLOW speed when unsafe
+                                    vehicle.set_velocity(velocities::SLOW);
+                                    if distance_to_stop_line <= 5.0 {
+                                        // Only stop when very close to intersection
+                                        vehicle.stop();
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        
+                        // Step 3: Determine appropriate speed (discrete speeds only)
+                        let target_speed = {
+                            // Determine base speed based on traffic conditions
+                            let mut vehicles_nearby: usize = 0;
+                            for (idx, other) in current_lane.iter().enumerate() {
+                                if idx != i && other.active {
+                                    let distance_diff = (vehicle.distance_to_intersection - other.distance_to_intersection).abs();
+                                    if distance_diff < 50.0_f32 {
+                                        vehicles_nearby += 1;
+                                    }
+                                }
+                            }
+                            
+                            // Choose discrete speed based on conditions
+                            if vehicle.distance_to_intersection < 15.0_f32 {
+                                // Very close to intersection - use slow speed
+                                velocities::SLOW
+                            } else if vehicles_nearby >= 3 {
+                                // Heavy traffic - use slow speed
+                                velocities::SLOW  
+                            } else if vehicle.distance_to_intersection < 30.0_f32 || vehicles_nearby >= 2 {
+                                // Approaching intersection or moderate traffic - use medium speed
+                                velocities::MEDIUM
+                            } else {
+                                // Open road - use fast speed
+                                velocities::FAST
+                            }
+                        };
+                        
+                        // Apply speed: either stop (0.0) or use target speed (no gradual changes)
+                        vehicle.set_velocity(target_speed);
+                        
+                        // Update position
+                        if vehicle.velocity > 0.0 {
+                            vehicle.update_position(delta_time);
+                        }
+                        
+                        // Check if vehicle is out of bounds
+                        if self.physics.is_out_of_bounds(vehicle) {
+                            vehicle.active = false;
+                        }
                     }
                 }
             }
-            
-            // Remove inactive vehicles (those that have passed through)
+        }
+        
+        // Remove inactive vehicles
+        for lane in self.lanes.values_mut() {
             lane.retain(|v| v.active);
         }
     }
+
 
     /// Gets the total number of vehicles currently in the intersection
     pub fn total_vehicles(&self) -> usize {

@@ -88,7 +88,8 @@ impl InputHandler {
     }
 
     /// Updates random vehicle generation (called each frame)
-    pub fn update_random_generation(&mut self, random_spawn_rate_ms: u64) -> Option<Vehicle> {
+    /// Now limits to max 2 vehicles per direction
+    pub fn update_random_generation(&mut self, random_spawn_rate_ms: u64, intersection: &crate::simulation::Intersection) -> Option<Vehicle> {
         if !self.random_generation_enabled {
             return None;
         }
@@ -107,6 +108,12 @@ impl InputHandler {
 
         // Generate a random direction
         let direction = Self::random_direction();
+        
+        // Check if this direction already has too many vehicles (max 2)
+        if intersection.vehicles_in_lane(direction) >= 2 {
+            return None; // Skip spawning if direction has 2 or more vehicles
+        }
+        
         Some(self.create_vehicle(direction))
     }
 

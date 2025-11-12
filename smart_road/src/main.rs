@@ -55,8 +55,8 @@ fn main() -> Result<(), String> {
             }
         }
 
-        // Update random vehicle generation
-        if let Some(vehicle) = input_handler.update_random_generation(800) {
+        // Update random vehicle generation (with vehicle limit per direction)
+        if let Some(vehicle) = input_handler.update_random_generation(800, simulation.intersection()) {
             simulation.add_vehicle(vehicle);
         }
 

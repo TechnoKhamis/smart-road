@@ -234,6 +234,64 @@ impl Vehicle {
         }
     }
 
+    /// Enhanced collision detection with trajectory prediction
+    /// 
+    /// Uses future position prediction to detect potential collisions
+    /// before they happen, allowing for proactive avoidance
+    pub fn is_too_close_advanced(&self, other: &Vehicle, safe_distance: f32, prediction_time: f32) -> bool {
+        // Check current distance
+        let current_distance = ((self.position.0 - other.position.0).powi(2) + 
+                               (self.position.1 - other.position.1).powi(2)).sqrt();
+        
+        if current_distance < safe_distance {
+            return true;
+        }
+        
+        // Predict future positions
+        let my_future_pos = self.predict_future_position_simple(prediction_time);
+        let other_future_pos = other.predict_future_position_simple(prediction_time);
+        
+        let future_distance = ((my_future_pos.0 - other_future_pos.0).powi(2) + 
+                              (my_future_pos.1 - other_future_pos.1).powi(2)).sqrt();
+        
+        // Check if future positions will be too close
+        future_distance < safe_distance * 1.2
+    }
+
+    /// Simple future position prediction
+    fn predict_future_position_simple(&self, time: f32) -> (f32, f32) {
+        let distance = self.velocity * time;
+        
+        match self.direction {
+            Direction::North => (self.position.0, self.position.1 + distance),
+            Direction::South => (self.position.0, self.position.1 - distance),
+            Direction::East => (self.position.0 + distance, self.position.1),
+            Direction::West => (self.position.0 - distance, self.position.1),
+        }
+    }
+
+    /// Smooth acceleration control for better traffic flow
+    /// 
+    /// Gradually adjusts velocity to prevent harsh acceleration/deceleration
+    pub fn smooth_accelerate(&mut self, target_velocity: f32, max_acceleration: f32, delta_time: f32) {
+        let velocity_diff = target_velocity - self.velocity;
+        let max_change = max_acceleration * delta_time;
+        
+        if velocity_diff.abs() <= max_change {
+            // Can reach target velocity this frame
+            self.velocity = target_velocity;
+        } else if velocity_diff > 0.0 {
+            // Accelerate
+            self.velocity += max_change;
+        } else {
+            // Decelerate
+            self.velocity -= max_change;
+        }
+        
+        // Ensure velocity doesn't go negative
+        self.velocity = self.velocity.max(0.0);
+    }
+
     /// Checks if this vehicle is too close to another vehicle
     pub fn is_too_close(&self, other: &Vehicle, safe_distance: f32) -> bool {
         // Calculate Euclidean distance between the two vehicles

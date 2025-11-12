@@ -27,6 +27,11 @@ impl Simulation {
         }
     }
 
+    /// Get a reference to the intersection for vehicle counting
+    pub fn intersection(&self) -> &Intersection {
+        &self.intersection
+    }
+
     pub fn update(&mut self, delta_time: f32) {
         self.intersection.update(delta_time);
     }
