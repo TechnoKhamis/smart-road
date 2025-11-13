@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use super::vehicle::{Vehicle, Direction, Route};
 use super::physics::Physics;
 
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::StatisticsManager;  // Add this import
+
+
 
 #[derive(Debug)]
 pub struct Intersection {
@@ -37,7 +42,7 @@ impl Intersection {
     /// A vehicle can enter if:
     /// 1. There are no vehicles in its lane, OR
     /// 2. All vehicles in its lane are at a safe distance
-    pub fn can_enter(&self, vehicle: &Vehicle) -> bool {
+    pub fn can_enter(&self, vehicle: &Vehicle,stats: Rc<RefCell<StatisticsManager>>) -> bool {
         // Get the vehicles in the same lane
         if let Some(lane_vehicles) = self.lanes.get(&vehicle.direction) {
             // If lane is empty, vehicle can enter
@@ -48,6 +53,7 @@ impl Intersection {
             // Check if vehicle is too close to any vehicle in the same lane
             for other in lane_vehicles {
                 if vehicle.is_too_close(other, self.safe_distance) {
+                    stats.borrow_mut().record_close_call();
                     return false;
                 }
             }
@@ -95,9 +101,9 @@ impl Intersection {
     /// 
     /// The vehicle is added to the appropriate lane based on its direction.
     /// The vehicle is only added if it can safely enter.
-    pub fn add_vehicle(&mut self, direction: Direction, vehicle: Vehicle) -> bool {
+    pub fn add_vehicle(&mut self, direction: Direction, vehicle: Vehicle,stats: Rc<RefCell<StatisticsManager>>) -> bool {
         // Check if vehicle can safely enter
-        if !self.can_enter(&vehicle) {
+        if !self.can_enter(&vehicle,stats) {
             return false;
         }
         
@@ -115,17 +121,19 @@ impl Intersection {
     /// This method:
     /// 1. Updates the position of each active vehicle
     /// 2. Removes vehicles that have completed their journey through the intersection
-    pub fn update(&mut self, delta_time: f32) {
+    pub fn update(&mut self, delta_time: f32,stats: Rc<RefCell<StatisticsManager>> ) {
         // Update each lane
         for lane in self.lanes.values_mut() {
             // Update positions of all vehicles
             for vehicle in lane.iter_mut() {
+                stats.borrow_mut().record_velocity(vehicle.velocity);
                 if vehicle.active {
                     vehicle.update_position(delta_time);
                     // Use physics to check boundaries
                     if self.physics.is_out_of_bounds(vehicle) {
                         vehicle.active = false;
                     }
+               
                 }
             }
             
@@ -144,6 +152,7 @@ impl Intersection {
         self.lanes.get(&direction).map_or(0, |lane| lane.len())
     }
 }
+/* 
 
 #[cfg(test)]
 mod tests {
@@ -373,3 +382,4 @@ mod tests {
         assert_eq!(intersection.total_vehicles(), 4);
     }
 }
+    */

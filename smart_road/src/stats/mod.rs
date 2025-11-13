@@ -1,12 +1,6 @@
-//! Stats module skeleton
+//! Statistics module for tracking and rendering game stats
 
-/// Placeholder for statistics collection and reporting
-pub struct Stats {
-    // add stats fields here
-}
+pub mod stats;
 
-impl Stats {
-    pub fn new() -> Self {
-        Stats {}
-    }
-}
+// Re-export the main struct for easier access
+pub use stats::StatisticsManager;
