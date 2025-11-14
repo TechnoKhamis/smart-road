@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::vehicle::{Vehicle, Direction, Route, INTERSECTION_HALF_WIDTH};
 use super::physics::{Physics, velocities};
+use crate::stats::STATS;  // Import the singleton
 
 /// Traffic intersection with zero-collision management
 #[derive(Debug)]
@@ -13,24 +14,27 @@ pub struct Intersection {
     pub physics: Physics,
     /// Distance from intersection center where vehicles must evaluate safety
     pub intersection_entry_distance: f32,
+    /// Track vehicle pairs that have already had a close call recorded
+    recorded_close_calls: HashSet<(u32, u32)>,
 }
 
 impl Intersection {
     /// Creates a new intersection with the specified safe distance
     pub fn new(safe_distance: f32) -> Self {
         let mut lanes = HashMap::new();
-        
+
         // Initialize empty vehicle queues for each direction
         lanes.insert(Direction::North, Vec::new());
         lanes.insert(Direction::South, Vec::new());
         lanes.insert(Direction::East, Vec::new());
         lanes.insert(Direction::West, Vec::new());
-        
+
         Intersection {
             lanes,
             safe_distance,
             physics: Physics::new(safe_distance, 100.0),
             intersection_entry_distance: INTERSECTION_HALF_WIDTH + 10.0, // 10m before intersection
+            recorded_close_calls: HashSet::new(),
         }
     }
 
@@ -38,6 +42,7 @@ impl Intersection {
     pub fn add_vehicle(&mut self, direction: Direction, vehicle: Vehicle) -> bool {
         if let Some(lane) = self.lanes.get_mut(&direction) {
             lane.push(vehicle);
+            STATS.lock().unwrap().update_car_count();
             return true;
         }
         false
@@ -49,10 +54,25 @@ impl Intersection {
         let all_lanes_snapshot: HashMap<Direction, Vec<Vehicle>> = self.lanes.iter()
             .map(|(dir, vehicles)| (*dir, vehicles.clone()))
             .collect();
-        
+
+        // Get set of all active vehicle IDs for cleanup
+        let active_ids: HashSet<u32> = all_lanes_snapshot.values()
+            .flat_map(|lane| lane.iter())
+            .filter(|v| v.active)
+            .map(|v| v.id)
+            .collect();
+
+        // Clean up recorded close calls for inactive vehicles
+        self.recorded_close_calls.retain(|(id1, id2)| {
+            active_ids.contains(id1) && active_ids.contains(id2)
+        });
+
+        // Track close calls before processing vehicles
+        self.detect_close_calls(&all_lanes_snapshot);
+
         // Process each lane separately to avoid borrowing issues
         let directions = [Direction::North, Direction::South, Direction::East, Direction::West];
-        
+
         for &direction in &directions {
             if let Some(lane) = self.lanes.get_mut(&direction) {
                 // Sort by distance to intersection (farthest first for processing)
@@ -357,6 +377,7 @@ impl Intersection {
                             vehicle.active = false;
                         }
                     }
+               
                 }
             }
         }
@@ -376,5 +397,69 @@ impl Intersection {
     /// Gets the number of vehicles in a specific lane
     pub fn vehicles_in_lane(&self, direction: Direction) -> usize {
         self.lanes.get(&direction).map_or(0, |lane| lane.len())
+    }
+
+    /// Detects close calls between vehicles
+    ///
+    /// A close call is when two active vehicles pass within the safe distance threshold.
+    /// The algorithm tracks when vehicles enter and exit the "danger zone" to count each
+    /// close call only once per encounter.
+    fn detect_close_calls(&mut self, all_lanes: &HashMap<Direction, Vec<Vehicle>>) {
+        let mut checked_pairs = HashSet::new();
+        let mut currently_close_pairs = HashSet::new();
+
+        // Check all pairs of vehicles from different lanes
+        for (_dir1, lane1) in all_lanes.iter() {
+            for vehicle1 in lane1.iter() {
+                if !vehicle1.active {
+                    continue;
+                }
+
+                for (_dir2, lane2) in all_lanes.iter() {
+                    for vehicle2 in lane2.iter() {
+                        if !vehicle2.active || vehicle1.id == vehicle2.id {
+                            continue;
+                        }
+
+                        // Create a unique pair identifier (order doesn't matter)
+                        let pair = if vehicle1.id < vehicle2.id {
+                            (vehicle1.id, vehicle2.id)
+                        } else {
+                            (vehicle2.id, vehicle1.id)
+                        };
+
+                        // Skip if we already checked this pair in this frame
+                        if checked_pairs.contains(&pair) {
+                            continue;
+                        }
+                        checked_pairs.insert(pair);
+
+                        // Calculate distance between vehicles
+                        let dx = vehicle1.position.0 - vehicle2.position.0;
+                        let dy = vehicle1.position.1 - vehicle2.position.1;
+                        let distance = (dx * dx + dy * dy).sqrt();
+
+                        // Check if vehicles are currently too close
+                        if distance < self.safe_distance {
+                            currently_close_pairs.insert(pair);
+
+                            // Only record as a close call if this is a NEW violation
+                            // (not already being tracked)
+                            if !self.recorded_close_calls.contains(&pair) {
+                                // Close call detected: record it
+                                self.recorded_close_calls.insert(pair);
+                                STATS.lock().unwrap().record_close_call();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reset tracking for pairs that are no longer close
+        // This allows the same pair to be counted again if they separate and come close later
+        self.recorded_close_calls.retain(|pair| {
+            currently_close_pairs.contains(pair)
+        });
     }
 }

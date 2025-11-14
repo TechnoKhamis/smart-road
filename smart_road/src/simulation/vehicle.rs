@@ -1,3 +1,5 @@
+use crate::stats::STATS;  // Import the singleton
+
 /// Represents the four cardinal directions a vehicle can come from
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
@@ -310,6 +312,7 @@ impl Vehicle {
 
     /// Sets the vehicle's velocity
     pub fn set_velocity(&mut self, velocity: f32) {
+        STATS.lock().unwrap().record_velocity(velocity);
         self.velocity = velocity;
     }
 

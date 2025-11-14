@@ -49,10 +49,10 @@ impl InputHandler {
     /// Handles a keypress event and returns vehicles to spawn (if any)
     pub fn handle_keypress(&mut self, keycode: Keycode) -> Vec<Vehicle> {
         match keycode {
-            Keycode::Up => self.try_spawn_vehicle(Direction::South),
-            Keycode::Down => self.try_spawn_vehicle(Direction::North),
-            Keycode::Right => self.try_spawn_vehicle(Direction::West),
-            Keycode::Left => self.try_spawn_vehicle(Direction::East),
+            Keycode::Up => self.try_spawn_vehicle(Direction::North),
+            Keycode::Down => self.try_spawn_vehicle(Direction::South),
+            Keycode::Right => self.try_spawn_vehicle(Direction::East),
+            Keycode::Left => self.try_spawn_vehicle(Direction::West),
             Keycode::R => {
                 self.random_generation_enabled = !self.random_generation_enabled;
                 Vec::new()

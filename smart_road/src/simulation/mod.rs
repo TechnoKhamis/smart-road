@@ -1,3 +1,7 @@
+//! Simulation module skeleton
+use crate::stats::STATS;  // Import the singleton
+
+/// Expose the vehicle module so other modules can use Vehicle, Route, Direction
 pub mod vehicle;
 pub mod intersection;
 pub(crate) mod physics;
@@ -34,6 +38,9 @@ impl Simulation {
 
     pub fn update(&mut self, delta_time: f32) {
         self.intersection.update(delta_time);
+        // Update car count from active vehicles in intersection
+        let active_count = self.intersection.total_vehicles();
+        STATS.lock().unwrap().num_cars = active_count as i32;
     }
 
     pub fn print_statistics(&self) {

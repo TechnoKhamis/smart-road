@@ -1,12 +1,12 @@
-//! Stats module skeleton
+//! Statistics module for tracking and rendering game stats
 
-/// Placeholder for statistics collection and reporting
-pub struct Stats {
-    // add stats fields here
-}
+pub mod stats;
+pub use stats::StatisticsManager;
 
-impl Stats {
-    pub fn new() -> Self {
-        Stats {}
-    }
-}
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+/// Global singleton instance of StatisticsManager
+pub static STATS: Lazy<Mutex<StatisticsManager>> = Lazy::new(|| {
+    Mutex::new(StatisticsManager::new())
+});
